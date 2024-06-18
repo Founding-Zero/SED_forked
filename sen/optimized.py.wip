@@ -23,7 +23,7 @@ import numpy as np
 import supersuit as ss
 import torch
 import torch.nn as nn
-import torch.optim as optim
+import torch.optim as opztim
 import torchvision
 import typer
 from eztils import datestr

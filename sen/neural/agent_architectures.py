@@ -8,7 +8,9 @@ class Agent(nn.Module):
     def __init__(self, envs):
         super().__init__()
         self.network = nn.Sequential(
-            self.layer_init(nn.Conv2d(envs.single_observation_space.shape[2], 32, 8, stride=4)),
+            self.layer_init(
+                nn.Conv2d(envs.single_observation_space.shape[2], 32, 8, stride=4)
+            ),
             nn.ReLU(),
             self.layer_init(nn.Conv2d(32, 64, 4, stride=2)),
             nn.ReLU(),
@@ -18,7 +20,9 @@ class Agent(nn.Module):
             self.layer_init(nn.Linear(64 * 7 * 7, 512)),
             nn.ReLU(),
         )
-        self.actor = self.layer_init(nn.Linear(512, envs.single_action_space.n), std=0.01)
+        self.actor = self.layer_init(
+            nn.Linear(512, envs.single_action_space.n), std=0.01
+        )
         self.critic = self.layer_init(nn.Linear(512, 1), std=1)
 
     def get_value(self, x):
@@ -89,7 +93,9 @@ class PrincipalAgent(nn.Module):
         probs2 = Categorical(logits=logits2)
         probs3 = Categorical(logits=logits3)
         if action is None:
-            action = torch.stack([probs1.sample(), probs2.sample(), probs3.sample()], dim=1)
+            action = torch.stack(
+                [probs1.sample(), probs2.sample(), probs3.sample()], dim=1
+            )
         log_prob = (
             probs1.log_prob(action[:, 0])
             + probs2.log_prob(action[:, 1])
