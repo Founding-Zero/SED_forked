@@ -23,14 +23,14 @@ import torchvision
 from dotenv import load_dotenv
 from eztils import abspath, datestr, setup_path
 from eztils.argparser import HfArgumentParser, update_dataclass_defaults
-from eztils.torch import seed_everything
-from logger import Logger
+from eztils.torch import seed_everything, set_gpu_mode
 from meltingpot import substrate
 from rich import print
 from torch.utils.tensorboard import SummaryWriter
-from utils import *
 
-from research_project import utils
+from research_project.buffer import AgentBuffer, PrincipalBuffer
+from research_project.logger import Logger
+from research_project.utils import *
 from sen import LOG_DIR, huggingface_upload, version
 from sen.neural.agent_architectures import Agent, PrincipalAgent
 from sen.principal import Principal
@@ -61,7 +61,6 @@ def setup_experiment() -> Config:
     print("Setting up experiment...")
     global RUN_DIR
     global LOG_DIR
-
     # create run dir
     RUN_DIR = setup_path(DATA_ROOT / "runs")
     LOG_DIR = setup_path(RUN_DIR / datestr())
@@ -125,6 +124,8 @@ def main():
 
     seed_everything(args.seed, args.torch_deterministic)
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    if torch.cuda.is_available() and args.cuda:
+        set_gpu_mode(True)
     print("device:", device)
 
     env_name = "commons_harvest__open"
@@ -132,7 +133,25 @@ def main():
     num_agents, num_envs, envs, principal = create_envs(args, env_config)
     voting_values, selfishness, trust = set_agent_preferences(num_agents)
 
-    ctx = Context(args, num_agents, num_envs, envs, device, principal)
+    agent = Agent(envs)
+    principal_agent = PrincipalAgent(num_agents)
+
+    agent_buffer = AgentBuffer(
+        num_envs,
+        base_shape=(args.sampling_horizon, num_envs),
+        obs_shape=envs.single_observation_space.shape,
+        action_shape=envs.single_action_space.shape,
+    )
+    principal_buffer = PrincipalBuffer(
+        num_envs,
+        base_shape=(args.sampling_horizon, args.num_parallel_games),
+        obs_shape=(144, 192, 3),
+        action_shape=3,
+        cumulative_shape=num_agents,
+    )
+    ctx = Context(
+        args, num_agents, num_envs, envs, device, principal, agent, principal_agent
+    )
     ### TODO: Ask Eddie about this (found in optimized.py)
     # if args.load_pretrained:
     #     warnings.warn("loading pretrained agents")
