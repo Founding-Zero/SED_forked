@@ -29,7 +29,9 @@ from rich import print
 from torch.utils.tensorboard import SummaryWriter
 
 from research_project.buffer import AgentBuffer, PrincipalBuffer
+from research_project.collection import collect_data_for_policy_update
 from research_project.logger import Logger
+from research_project.optimize import optimize_policy
 from research_project.utils import *
 from sen import LOG_DIR, huggingface_upload, version
 from sen.neural.agent_architectures import Agent, PrincipalAgent
@@ -128,30 +130,9 @@ def main():
         set_gpu_mode(True)
     print("device:", device)
 
-    env_name = "commons_harvest__open"
-    env_config = substrate.get_config(env_name)
-    num_agents, num_envs, envs, principal = create_envs(args, env_config)
-    voting_values, selfishness, trust = set_agent_preferences(num_agents)
+    ctx, envs = set_context(args, device)
+    voting_values, trust = set_agent_preferences(ctx.num_agents)
 
-    agent = Agent(envs)
-    principal_agent = PrincipalAgent(num_agents)
-
-    agent_buffer = AgentBuffer(
-        num_envs,
-        base_shape=(args.sampling_horizon, num_envs),
-        obs_shape=envs.single_observation_space.shape,
-        action_shape=envs.single_action_space.shape,
-    )
-    principal_buffer = PrincipalBuffer(
-        num_envs,
-        base_shape=(args.sampling_horizon, args.num_parallel_games),
-        obs_shape=(144, 192, 3),
-        action_shape=3,
-        cumulative_shape=num_agents,
-    )
-    ctx = Context(
-        args, num_agents, num_envs, envs, device, principal, agent, principal_agent
-    )
     ### TODO: Ask Eddie about this (found in optimized.py)
     # if args.load_pretrained:
     #     warnings.warn("loading pretrained agents")
@@ -165,15 +146,7 @@ def main():
         #######################
         # Anneal LR and Tax Cap
         #######################
-        """
-        Uses:
-        ctx.num_policy_updates_total
-        ctx.current_episode
-        ctx.tax_frac
-        Sets:
-        ctx.optimizer.param_groups[0]['lr']
-        ctx.tax_frac
-        """
+
         ctx.optimizer.param_groups[0]["lr"] = anneal_lr(
             update, ctx.num_policy_updates_total, args
         )
@@ -182,115 +155,25 @@ def main():
         ################################
         # Collect Data For Policy Update
         ################################
-        """
-        USES:
-        ctx.episode_step
-        ctx.next_obs
-        ctx.next_done
-        ctx.principal_next_obs
-        ctx.principal_next_done
-        ctx.agent
-        ctx.principal_agent
-        ctx.tax_values
-        ctx.principal
-        ctx.num_envs
-        ctx.num_agents
-        ctx.device
-        ctx.selfishness
-        ctx.trust
-        ctx.principal_tensordict["cumulative_rewards"]
-        ctx.principal.objective
-        ctx.tax_frac
-        ctx.episode_step
-        ctx.principal_episode_rewards
-        ctx.episode_rewards
-        ctx.episode_world_obs
-        ctx.num_updates_for_this_ep
 
-        SETS:
-        ctx.agent_tensordict
-        ctx.principal_tensordict
-        ctx.tax_values
-        ctx.next_obs
-        ctx.next_done
-        ctx.principal_next_obs
-        ctx.principal_next_done
-        ctx.principal_tensordict["cumulative_rewards"]
-        ctx.episode_step
-        ctx.principal_episode_rewards
-        ctx.episode_rewards
-        ctx.episode_world_obs
-        """
         start_step, end_step = collect_data_for_policy_update(args, envs, ctx)
 
         ####################
         # Save Parameters
         ####################
-        """
-        USES:
-        ctx.current_episode
-        ctx.num_updates_for_this_ep
-        ctx.agent_tensordict
-        SET:
-        None
-        """
+
         if args.save_model and ctx.current_episode % args.save_model_freq == 0:
             save_params(ctx, run_name)
 
         ####################
         # Optimize Policy
         ####################
-        """
-        USES:
-        ctx.agent
-        ctx.next_obs
-        ctx.next_done
-        ctx.device
-        ctx.agent_tensordict
-        ctx.principal_agent
-        ctx.principal_next_obs
-        ctx.next_cumulative_reward
-        ctx.principal_next_done
-        ctx.principal_tensordict
-        ctx.principal_advantages
-        ctx.b_returns
-        ctx.b_values
-        ctx.optimizer
-        ctx.num_updates_for_this_ep
-        SETS:
-        ctx.principal_advantages
-        ctx.b_returns
-        ctx.b_values
-        """
-        optimize_policy(args, ctx, envs, start_step, logger)
-        # bootstrap value if not done
 
-        ####################
-        # Optimize Principal
-        ####################
-        """
-        USES:
-        ctx.principal_tensordict["obs"]
-        ctx.principal_tensordict["logprobs"]
-        ctx.principal_tensordict["cumulative_rewards"]
-        ctx.num_agents
-        ctx.principal_tensordict["actions"]
-        ctx.principal_advantages
-        ctx.principal_returns
-        ctx.principal_tensordict["values"]
-        ctx.principal_agent
-        ctx.principal_optimizer
-        ctx.b_values
-        ctx.b_returns
-        ctx.num_updates_for_this_ep
-        ctx.current_episode
-        SETS:
-        ctx.principal_advantages
-        ctx.b_returns
-        ctx.b_values
-        ctx.num_updates_for_this_ep
-        """
-        optimize_principal(args, ctx, start_step, end_step, logger)
+        optimize_policy(args, ctx, ctx.agent, logger, ctx.agent_buffer)
+        if not args.LLM:
+            optimize_policy(
+                args, ctx, ctx.principal_agent, logger, ctx.principal_buffer
+            )
 
         if ctx.num_updates_for_this_ep == ctx.num_policy_updates_per_ep:
             # episode finished
@@ -298,23 +181,7 @@ def main():
             #######
             # Log
             #######
-            """
-            USES:
-            ctx.current_episode
-            ctx.episode_world_obs
-            ctx.optimizer
-            ctx.episode_rewards
-            ctx.num_policy_updates_per_ep
-            ctx.principal_episode_rewards
-            ctx.num_agents
-            ctx.tax_values
-            ctx.agent
-            ctx.principal_agent
-            SETS:
-            None
-            """
             logger.log(run_name, args, ctx, writer, ctx.tax_frac)
-
             ########################
             # Vote On New Objective
             ########################

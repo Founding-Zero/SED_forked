@@ -36,6 +36,7 @@ from pettingzoo import utils as pettingzoo_utils
 from pettingzoo.utils import wrappers
 from tensordict import TensorDict
 
+from research_project.buffer import AgentBuffer, BufferList, PrincipalBuffer
 from research_project.logger import Logger
 from sen.neural.agent_architectures import Agent, PrincipalAgent
 from sen.principal import Principal
@@ -217,6 +218,7 @@ class Config:
     vf_coef: float = 0.5  # coefficient of the value function
     max_grad_norm: float = 0.5  # the maximum norm for the gradient clipping
     target_kl: float = None  # the target KL divergence threshold
+    LLM = False
 
 
 class Context:
@@ -230,6 +232,9 @@ class Context:
         principal: Principal,
         agent: Agent,
         principal_agent: PrincipalAgent,
+        agent_buffer: AgentBuffer,
+        principal_buffer: PrincipalBuffer,
+        buffer_list: BufferList,
     ):
         self.num_agents = num_agents
         self.num_envs = num_envs
@@ -238,10 +243,8 @@ class Context:
         self.trust = np.random.uniform(size=[self.num_agents])
 
         self.device = device
-        self.agent = Agent(
-            envs
-        )  # a new init function outside that you just pass to the context
-        self.principal_agent = PrincipalAgent(self.num_agents)
+        self.agent: Agent = agent
+        self.principal_agent: PrincipalAgent = principal_agent
 
         self.optimizer = optim.Adam(
             self.agent.parameters(), lr=args.learning_rate, eps=args.adam_eps
@@ -252,47 +255,12 @@ class Context:
         self.principal = principal
 
         # ALGO Logic: Storage setup
-        self.agent_tensordict = TensorDict.fromkeys(
-            ["logprobs", "rewards", "dones", "values"],
-            zeros((args.sampling_horizon, num_envs)),
-        )
-        self.agent_tensordict["obs"] = zeros(
-            (args.sampling_horizon, num_envs) + envs.single_observation_space.shape
-        )
+        self.agent_buffer = agent_buffer
+        self.principal_buffer = principal_buffer
+        self.buffer_list = buffer_list
 
-        self.agent_tensordict["actions"] = zeros(
-            (args.sampling_horizon, num_envs) + envs.single_action_space.shape
-        )
-
-        # maybe use torchrl replaybuffer https://pytorch.org/rl/stable/tutorials/getting-started-3.html?
-        # probably use tensorclass
-        #  https://github.com/pytorch/tensordict?tab=readme-ov-file#tensorclass
-        self.principal_tensordict = TensorDict.fromkeys(
-            ["logprobs", "rewards", "dones", "values"],
-            zeros((args.sampling_horizon, args.num_parallel_games)),
-        )
-        self.principal_tensordict["obs"] = zeros(
-            (args.sampling_horizon, args.num_parallel_games) + (144, 192, 3)
-        )
-        self.principal_tensordict["actions"] = zeros(
-            (args.sampling_horizon, args.num_parallel_games, 3)
-        )
-        self.principal_tensordict["cumulative_rewards"] = zeros(
-            (args.sampling_horizon, args.num_parallel_games, self.num_agents)
-        )
-        self.next_obs = torch.Tensor(envs.reset())
-        self.next_done = zeros(num_envs)
-        self.next_cumulative_reward = zeros(args.num_parallel_games, self.num_agents)
-
-        self.principal_next_obs = torch.stack(
-            [
-                torch.Tensor(envs.reset_infos[i][1])
-                for i in range(0, num_envs, self.num_agents)
-            ]
-        )
-        self.principal_next_done = zeros(args.num_parallel_games)
         self.principal_advantages = zeros_like(
-            self.principal_tensordict["principal_rewards"]
+            self.principal_buffer["principal_rewards"]
         )
 
         self.num_policy_updates_per_ep = args.episode_length // args.sampling_horizon
@@ -331,9 +299,8 @@ class Context:
 
 def set_agent_preferences(num_agents):
     voting_values = np.random.uniform(size=[num_agents])
-    selfishness = np.random.uniform(size=[num_agents])
     trust = np.random.uniform(size=[num_agents])
-    return voting_values, selfishness, trust
+    return voting_values, trust
 
 
 def create_envs(args: Config, env_config, num_players):
@@ -383,7 +350,7 @@ def anneal_tax_cap(args: Config, current_episode, curr_tax):
 
 
 # TODO: Boolean toggle for collecting principal info
-def collect_data_for_policy_update(args: Config, ctx: Context, envs):
+def old_collect_data_for_policy_update(args: Config, ctx: Context, envs):
     start_step = ctx.episode_step
     for step in range(0, args.sampling_horizon):
         if ctx.next_obs.shape[3] != 19:
@@ -547,7 +514,46 @@ def save_params(ctx: Context, run_name):
         )
 
 
-def optimize_policy(args: Config, ctx: Context, envs, logger: Logger):
+def set_context(args: Context, device):
+    env_name = "commons_harvest__open"
+    env_config = substrate.get_config(env_name)
+    num_agents, num_envs, envs, principal = create_envs(args, env_config)
+
+    agent = Agent(envs, num_envs)
+    principal_agent = PrincipalAgent(
+        num_agents, envs, num_envs, args.num_parallel_games
+    )
+    agent_buffer = AgentBuffer(
+        num_envs,
+        base_shape=(args.sampling_horizon, num_envs),
+        obs_shape=envs.single_observation_space.shape,
+        action_shape=envs.single_action_space.shape,
+    )
+    principal_buffer = PrincipalBuffer(
+        num_envs,
+        base_shape=(args.sampling_horizon, args.num_parallel_games),
+        obs_shape=(144, 192, 3),
+        action_shape=3,
+        cumulative_shape=num_agents,
+    )
+    buffer_list = BufferList(agent_buffer, principal_buffer)
+    ctx = Context(
+        args=args,
+        num_agents=num_agents,
+        num_envs=num_envs,
+        envs=envs,
+        device=device,
+        principal=principal,
+        agent=agent,
+        principal_agent=principal_agent,
+        agent_buffer=agent_buffer,
+        principal_buffer=principal_buffer,
+        buffer_list=buffer_list,
+    )
+    return ctx, envs
+
+
+def old_optimize_policy(args: Config, ctx: Context, envs, logger: Logger):
     with torch.no_grad():
         next_value = ctx.agent.get_value(ctx.next_obs).reshape(
             1, -1
@@ -657,162 +663,3 @@ def optimize_policy(args: Config, ctx: Context, envs, logger: Logger):
             if args.target_kl is not None:
                 if logger.approx_kl > args.target_kl:
                     break
-
-
-# under returns = advantages
-# # bootstrap ctx.principal value if not done
-#         # This is the same process, but for Principal
-#         with torch.no_grad():
-#             principal_next_value = ctx.principal_agent.get_value(
-#                 ctx.principal_next_obs, ctx.next_cumulative_reward
-#             ).reshape(1, -1)
-#             ctx.principal_advantages = zeros_like(ctx.principal_tensordict["rewards"])
-#             principal_lastgaelam = 0
-#             # not sure it makes sense to have the same sampling horizon if the principal only has meaningful actions every tax period
-#             for t in reversed(range(args.sampling_horizon)):
-#                 if t == args.sampling_horizon - 1:
-#                     principal_nextnonterminal = 1.0 - ctx.principal_next_done
-#                     principal_nextvalues = principal_next_value
-#                 else:
-#                     principal_nextnonterminal = (
-#                         1.0 - ctx.principal_tensordict["dones"][t + 1]
-#                     )
-#                     principal_nextvalues = ctx.principal_tensordict["values"][t + 1]
-#                 principal_delta = (
-#                     ctx.principal_tensordict["rewards"][t]
-#                     + args.gamma * principal_nextvalues * principal_nextnonterminal
-#                     - ctx.principal_tensordict["values"][t]
-#                 )
-#                 ctx.principal_advantages[t] = principal_lastgaelam = (
-#                     principal_delta
-#                     + args.gamma
-#                     * args.gae_lambda
-#                     * principal_nextnonterminal
-#                     * principal_lastgaelam
-#                 )
-#             principal_returns = (
-#                 ctx.principal_advantages + ctx.principal_tensordict["values"]
-#             )
-# try to make just a single optimize, and then pass in as a param if it's opt. policy or principal
-def optimize_principal(
-    args: Config, ctx: Context, start_step, end_step, logger: Logger
-):
-    # flatten batch for ctx.principal
-    principal_b_obs = ctx.principal_tensordict["obs"].reshape((-1,) + (144, 192, 3))
-    principal_b_logprobs = ctx.principal_tensordict["logprobs"].reshape(-1)
-    b_cumulative_rewards = ctx.principal_tensordict["cumulative_rewards"].reshape(
-        -1, ctx.num_agents
-    )  # from sampling_horizon x num_games x num_agents to (sampling_horizon*num_games) x num_agents
-    principal_b_actions = ctx.principal_tensordict["actions"].reshape((-1, 3))
-    principal_b_advantages = ctx.principal_advantages.reshape(-1)
-    principal_b_returns = ctx.principal_returns.reshape(-1)
-    principal_b_values = ctx.principal_tensordict["values"].reshape(-1)
-
-    # Optimizing the ctx.principal policy and value network
-    b_inds = np.arange(len(principal_b_obs))
-    principal_clipfracs = []
-    for epoch in range(args.update_epochs):
-        np.random.shuffle(b_inds)
-        for start in range(
-            0, len(principal_b_obs), args.minibatch_size // ctx.num_agents
-        ):  # ctx.principal has batch size num_games not num_envs(=num_games*num_agents) so divide to ensure same number of minibatches as agents
-            end = start + args.minibatch_size // ctx.num_agents
-            mb_inds = b_inds[start:end]
-
-            (
-                _,
-                principal_newlogprob,
-                principal_entropy,
-                principal_newvalue,
-            ) = ctx.principal_agent.get_action_and_value(
-                principal_b_obs[mb_inds],
-                b_cumulative_rewards[mb_inds],
-                principal_b_actions.long()[mb_inds],
-            )
-            principal_logratio = principal_newlogprob - principal_b_logprobs[mb_inds]
-            principal_ratio = principal_logratio.exp()
-
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                principal_old_approx_kl = (-principal_logratio).mean()
-                principal_approx_kl = (
-                    (principal_ratio - 1) - principal_logratio
-                ).mean()
-                principal_clipfracs += [
-                    ((principal_ratio - 1.0).abs() > args.clip_coef)
-                    .float()
-                    .mean()
-                    .item()
-                ]
-
-            principal_mb_advantages = principal_b_advantages[mb_inds]
-            if args.norm_adv:
-                principal_mb_advantages = (
-                    principal_mb_advantages - principal_mb_advantages.mean()
-                ) / (principal_mb_advantages.std() + 1e-8)
-
-            # Policy loss
-            principal_pg_loss1 = -principal_mb_advantages * principal_ratio
-            principal_pg_loss2 = -principal_mb_advantages * torch.clamp(
-                principal_ratio, 1 - args.clip_coef, 1 + args.clip_coef
-            )
-            principal_pg_loss = torch.max(principal_pg_loss1, principal_pg_loss2).mean()
-
-            # Value loss
-            principal_newvalue = principal_newvalue.view(-1)
-            if args.clip_vloss:
-                principal_v_loss_unclipped = (
-                    principal_newvalue - principal_b_returns[mb_inds]
-                ) ** 2
-                principal_v_clipped = principal_b_values[mb_inds] + torch.clamp(
-                    principal_newvalue - principal_b_values[mb_inds],
-                    -args.clip_coef,
-                    args.clip_coef,
-                )
-                principal_v_loss_clipped = (
-                    principal_v_clipped - principal_b_returns[mb_inds]
-                ) ** 2
-                principal_v_loss_max = torch.max(
-                    principal_v_loss_unclipped, principal_v_loss_clipped
-                )
-                principal_v_loss = 0.5 * principal_v_loss_max.mean()
-            else:
-                principal_v_loss = (
-                    0.5
-                    * ((principal_newvalue - principal_b_returns[mb_inds]) ** 2).mean()
-                )
-
-            principal_entropy_loss = principal_entropy.mean()
-            principal_loss = (
-                principal_pg_loss
-                - args.ent_coef * principal_entropy_loss
-                + principal_v_loss * args.vf_coef
-            )
-
-            ctx.principal_optimizer.zero_grad()
-            principal_loss.backward()
-            nn.utils.clip_grad_norm_(
-                ctx.principal_agent.parameters(), args.max_grad_norm
-            )
-            ctx.principal_optimizer.step()
-
-    y_pred, y_true = ctx.b_values.cpu().numpy(), ctx.b_returns.cpu().numpy()
-    var_y = np.var(y_true)
-    logger.explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-    principal_y_pred, principal_y_true = (
-        principal_b_values.cpu().numpy(),
-        principal_b_returns.cpu().numpy(),
-    )
-    principal_var_y = np.var(principal_y_true)
-    principal_explained_var = (
-        np.nan
-        if principal_var_y == 0
-        else 1 - np.var(principal_y_true - principal_y_pred) / principal_var_y
-    )
-
-    # one more policy update done
-    ctx.num_updates_for_this_ep += 1
-    print(
-        f"Completed policy update {ctx.num_updates_for_this_ep} for episode {ctx.current_episode} - used steps {start_step} through {end_step}"
-    )

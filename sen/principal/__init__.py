@@ -31,8 +31,8 @@ class Principal:
         elif objective == "utilitarian":
             self.objective = self.utilitarian
 
-    # tax calculated at the end of an episode based off player wealth for that episode
-    def end_of_tax_period(self) -> float:
+    # tax calculated at each timestep
+    def tax(self) -> float:
         games_taxes = {}
         total_collected = {}
         for game_id in self.player_wealths.keys():
@@ -49,11 +49,6 @@ class Principal:
             games_taxes[game_id] = list(map(lambda x: x - redistribution_amount, taxes))
             # new_wealths = [wealth - tax + redistribution_amount for (wealth,tax) in zip(player_wealths,taxes)]
             # new_player_wealths[game_id] = new_wealths
-
-        # reset player wealths for next tax period
-        self.player_wealths = {
-            f"game_{idx}": [0] * self.num_players for idx in range(self.num_games)
-        }
 
         return games_taxes
 

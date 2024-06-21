@@ -1,11 +1,56 @@
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 import torch.nn as nn
+from eztils.torch import zeros
 from torch.distributions.categorical import Categorical
 
 
-class Agent(nn.Module):
-    def __init__(self, envs):
+@dataclass
+class StepInfo:
+    action: torch.Tensor
+    log_prob: torch.Tensor
+    entropy: torch.Tensor
+    value: torch.Tensor
+    obs: torch.Tensor
+    done: torch.Tensor = None
+
+
+@dataclass
+class FlattenedEpisodeInfo:
+    actions: torch.Tensor
+    log_probs: torch.Tensor
+    entropy: torch.Tensor
+    values: torch.Tensor
+    obs: torch.Tensor
+    done: torch.Tensor
+    cumulative_rewards: torch.Tensor = None
+
+
+class BaseAgent(ABC, nn.Module):
+    def __init__(self):
+        super().__init()
+        self.next_obs = None
+        self.next_done = None
+
+    @abstractmethod
+    def get_value(self, *args, **kwargs):
+        pass
+
+    @abstractmethod
+    def get_action_and_value(self, *args, **kwargs):
+        pass
+
+    def layer_init(self, layer, std=np.sqrt(2), bias_const=0.0):
+        torch.nn.init.orthogonal_(layer.weight, std)
+        torch.nn.init.constant_(layer.bias, bias_const)
+        return layer
+
+
+class Agent(BaseAgent):
+    def __init__(self, envs, num_envs):
         super().__init__()
         self.network = nn.Sequential(
             self.layer_init(
@@ -25,25 +70,31 @@ class Agent(nn.Module):
         )
         self.critic = self.layer_init(nn.Linear(512, 1), std=1)
 
+        # will be needed for optimization
+        self.next_obs = torch.Tensor(envs.reset())
+        self.next_done = zeros(num_envs)
+
     def get_value(self, x):
         return self.critic(self.network(x.permute((0, 3, 1, 2))))
 
-    def get_action_and_value(self, x, action=None):
+    def get_action_and_value(self, x, action=None, *args, **kwargs):
         hidden = self.network(x.permute((0, 3, 1, 2)))
         logits = self.actor(hidden)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
+        return StepInfo(
+            action=action,
+            log_prob=probs.log_prob(action),
+            entropy=probs.entropy(),
+            value=self.critic(hidden).flatten(),
+            obs=x,
+            done=None,
+        )
 
-    def layer_init(self, layer, std=np.sqrt(2), bias_const=0.0):
-        torch.nn.init.orthogonal_(layer.weight, std)
-        torch.nn.init.constant_(layer.bias, bias_const)
-        return layer
 
-
-class PrincipalAgent(nn.Module):
-    def __init__(self, num_agents):
+class PrincipalAgent(BaseAgent):
+    def __init__(self, num_agents, envs, num_envs, parallel_games):
         super().__init__()
         self.conv_net = nn.Sequential(
             self.layer_init(nn.Conv2d(3, 32, 8, stride=4)),
@@ -68,17 +119,29 @@ class PrincipalAgent(nn.Module):
         self.actor_head3 = self.layer_init(nn.Linear(512, 12), std=0.01)
         self.critic = self.layer_init(nn.Linear(512, 1), std=1)
 
-    def get_value(self, world_obs, cumulative_reward):
+        # will be needed for optimization
+        self.next_obs = torch.stack(
+            [
+                torch.Tensor(envs.reset_infos[i][1])
+                for i in range(0, num_envs, num_agents)
+            ]
+        )
+        self.next_done = zeros(parallel_games)
+        self.next_cumulative_reward = zeros(parallel_games, num_agents)
+
+    def get_value(self, world_obs):
         world_obs = world_obs.clone()
         world_obs /= 255.0
         conv_out = self.conv_net(world_obs.permute((0, 3, 1, 2)))
         with_rewards = torch.cat(
-            (conv_out, cumulative_reward), dim=1
+            (conv_out, self.next_cumulative_reward), dim=1
         )  # shape num_games x (512+num_agents)
         hidden = self.fully_connected(with_rewards)
         return self.critic(hidden)
 
-    def get_action_and_value(self, world_obs, cumulative_reward, action=None):
+    def get_action_and_value(
+        self, world_obs, cumulative_reward, action=None, *args, **kwargs
+    ):
         world_obs = world_obs.clone()
         world_obs /= 255.0
         conv_out = self.conv_net(world_obs.permute((0, 3, 1, 2)))
@@ -102,9 +165,10 @@ class PrincipalAgent(nn.Module):
             + probs3.log_prob(action[:, 2])
         )
         entropy = probs1.entropy() + probs2.entropy() + probs3.entropy()
-        return action, log_prob, entropy, self.critic(hidden)
-
-    def layer_init(self, layer, std=np.sqrt(2), bias_const=0.0):
-        torch.nn.init.orthogonal_(layer.weight, std)
-        torch.nn.init.constant_(layer.bias, bias_const)
-        return layer
+        return StepInfo(
+            action=action,
+            log_prob=log_prob,
+            entropy=entropy,
+            value=self.critic(hidden).flatten(),
+            obs=world_obs,
+        )

@@ -25,6 +25,7 @@ class Logger:
         self.episode = float("inf")
         self.tax_frac = float("inf")
         self.mean_reward_across_envs = float("inf")
+        self.principal_explained_var = float("inf")
 
     def log_video(self, run_name, episode, track, obs):
         video = torch.cat(obs, dim=0).cpu()
@@ -45,45 +46,60 @@ class Logger:
         os.remove(f"./videos_{run_name}/episode_{episode}.mp4")
 
     def log(
-        self, run_name, args: Config, ctx: Context, writer: SummaryWriter, tax_frac
+        self,
+        run_name,
+        args: Config,
+        ctx: Context,
+        writer: SummaryWriter,
+        tax_frac,
+        principal,
     ):
+        prefix = "principal" if principal else "agent"
         if args.capture_video and ctx.current_episode % args.video_freq == 0:
             # currently only records first of any parallel games running but
             # this is easily changed at the point where we add to episode_world_obs
             self.log_video(
-                run_name, ctx.current_episode, args.track, ctx.episode_world_obs
+                run_name, ctx.current_episode, args.track, ctx.episode_world_obs, prefix
             )
 
         writer.add_scalar(
-            "charts/learning_rate",
+            f"{prefix}charts/learning_rate",
             ctx.optimizer.param_groups[0]["lr"],
             ctx.current_episode,
         )
-        writer.add_scalar("losses/value_loss", self.v_loss.item(), ctx.current_episode)
         writer.add_scalar(
-            "losses/policy_loss", self.pg_loss.item(), ctx.current_episode
+            f"{prefix}losses/value_loss", self.v_loss.item(), ctx.current_episode
         )
         writer.add_scalar(
-            "losses/entropy", self.entropy_loss.item(), ctx.current_episode
+            f"{prefix}losses/policy_loss", self.pg_loss.item(), ctx.current_episode
         )
         writer.add_scalar(
-            "losses/old_approx_kl", self.old_approx_kl.item(), ctx.current_episode
+            f"{prefix}losses/entropy", self.entropy_loss.item(), ctx.current_episode
         )
         writer.add_scalar(
-            "losses/approx_kl", self.approx_kl.item(), ctx.current_episode
+            f"{prefix}losses/old_approx_kl",
+            self.old_approx_kl.item(),
+            ctx.current_episode,
         )
         writer.add_scalar(
-            "losses/clipfrac", np.mean(self.clipfracs), ctx.current_episode
+            f"{prefix}losses/approx_kl", self.approx_kl.item(), ctx.current_episode
         )
         writer.add_scalar(
-            "losses/explained_variance", self.explained_var, ctx.current_episode
+            f"{prefix}losses/clipfrac", np.mean(self.clipfracs), ctx.current_episode
         )
         writer.add_scalar(
-            "charts/mean_episodic_return",
+            f"{prefix}losses/explained_variance",
+            self.explained_var,
+            ctx.current_episode,
+        )
+        writer.add_scalar(
+            f"{prefix}charts/mean_episodic_return",
             torch.mean(self.mean_episodic_return),
             ctx.current_episode,
         )
-        writer.add_scalar("charts/episode", ctx.current_episode, ctx.current_episode)
+        writer.add_scalar(
+            f"{prefix}charts/episode", ctx.current_episode, ctx.current_episode
+        )
         writer.add_scalar("charts/tax_frac", self.tax_frac, ctx.current_episode)
         mean_rewards_across_envs = {
             player_idx: 0 for player_idx in range(0, ctx.num_agents)
@@ -106,7 +122,7 @@ class Logger:
                 ctx.current_episode,
             )
         print(
-            f"Finished episode {ctx.current_episode}, with {ctx.num_policy_updates_per_ep} policy updates"
+            f"Finished episode {ctx.current_episode}, with {ctx.num_policy_updates_per_ep} policy updates on {prefix}"
         )
         print(f"Mean episodic return: {torch.mean(ctx.episode_rewards)}")
         print(f"Episode returns: {mean_rewards_across_envs}")
@@ -135,23 +151,38 @@ class Logger:
         )
         print("*******************************")
 
-        if args.save_model and ctx.current_episode % args.save_model_freq == 0:
+        if (
+            args.save_model
+            and ctx.current_episode % args.save_model_freq == 0
+            and principal
+        ):
             try:
-                os.mkdir(f"./models_{run_name}")
+                os.mkdir(f"./models_{prefix}_{run_name}")
             except FileExistsError:
                 pass
-            torch.save(
-                ctx.agent.state_dict(),
-                f"./models_{run_name}/agent_{ctx.current_episode}.pth",
-            )
+
             torch.save(
                 ctx.principal_agent.state_dict(),
                 f"./models_{run_name}/principal_{ctx.current_episode}.pth",
             )
-            huggingface_upload.upload(f"./models_{run_name}", run_name)
-            os.remove(f"./models_{run_name}/agent_{ctx.current_episode}.pth")
+            huggingface_upload.upload(f"./models_{prefix}_{run_name}", run_name)
             os.remove(f"./models_{run_name}/principal_{ctx.current_episode}.pth")
 
-            huggingface_upload.upload(f"./saved_params_{run_name}", run_name)
-            shutil.rmtree(f"./saved_params_{run_name}/ep{ctx.current_episode}")
+            huggingface_upload.upload(f"./saved_params_{prefix}_{run_name}", run_name)
+            shutil.rmtree(f"./saved_params_{prefix}_{run_name}/ep{ctx.current_episode}")
+            print("model saved")
+        else:
+            try:
+                os.mkdir(f"./models_{prefix}_{run_name}")
+            except FileExistsError:
+                pass
+
+            torch.save(
+                ctx.agent.state_dict(),
+                f"./models_{run_name}/agent_{ctx.current_episode}.pth",
+            )
+            huggingface_upload.upload(f"./models_{prefix}_{run_name}", run_name)
+            os.remove(f"./models_{run_name}/agent_{ctx.current_episode}.pth")
+            huggingface_upload.upload(f"./saved_params_{prefix}_{run_name}", run_name)
+            shutil.rmtree(f"./saved_params_{prefix}_{run_name}/ep{ctx.current_episode}")
             print("model saved")
