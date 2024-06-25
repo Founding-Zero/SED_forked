@@ -5,38 +5,26 @@ Other global variables
 """
 from typing import List, Optional
 
-import copy
 import dataclasses
 import os
-import shutil
 import time
-import warnings
 from argparse import Namespace
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torchvision
 from dotenv import load_dotenv
 from eztils import abspath, datestr, setup_path
 from eztils.argparser import HfArgumentParser, update_dataclass_defaults
 from eztils.torch import seed_everything, set_gpu_mode
-from meltingpot import substrate
 from rich import print
 from torch.utils.tensorboard import SummaryWriter
 
-from research_project.buffer import AgentBuffer, PrincipalBuffer
 from research_project.collection import collect_data_for_policy_update
-from research_project.logger import Logger
+from research_project.new_logger import MLLogger
 from research_project.optimize import optimize_policy
+from research_project.principal.utils import vote
 from research_project.utils import *
-from sen import LOG_DIR, huggingface_upload, version
-from sen.neural.agent_architectures import Agent, PrincipalAgent
-from sen.principal import Principal
-from sen.principal.utils import vote
 
 load_dotenv()
 
@@ -85,19 +73,24 @@ def setup_experiment() -> Config:
     conf, extras = parser.parse_args_into_dataclasses()
 
     if extras.config is not None:  # parse config file
+        config_path = Path(extras.config)
+        if not config_path.is_file():
+            print(f"config file {config_path} not found. CWD: {os.getcwd()}")
         (original_conf,) = parser.parse_json_file(extras.config)
+        conf = update_dataclass_defaults(Config, original_conf)
         # reinit the parser so that the command line args overwrite the file-specified args
         parser = HfArgumentParser(update_dataclass_defaults(Config, original_conf))
         parser.add_argument("-c", "--config", type=str)
         conf, extras = parser.parse_args_into_dataclasses()
 
     parser.to_json([conf], LOG_DIR / "config.json")
+
     return conf
 
 
 def main():
     args: Config = setup_experiment()
-    logger = Logger()
+    logger = MLLogger(cfg=args)
     run_name = f"apple_picking__{args.exp_name}__{args.seed}__{int(time.time())}"
 
     print(f"[bold green]Welcome to research_project v{version}[/]")
@@ -124,7 +117,7 @@ def main():
         % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    seed_everything(args.seed, args.torch_deterministic)
+    seed_everything(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
     if torch.cuda.is_available() and args.cuda:
         set_gpu_mode(True)
@@ -156,14 +149,16 @@ def main():
         # Collect Data For Policy Update
         ################################
 
-        start_step, end_step = collect_data_for_policy_update(args, envs, ctx)
+        start_step, end_step = collect_data_for_policy_update(
+            args=args, ctx=ctx, envs=envs, logger=logger
+        )
 
         ####################
         # Save Parameters
         ####################
 
         if args.save_model and ctx.current_episode % args.save_model_freq == 0:
-            save_params(ctx, run_name)
+            save_params(ctx=ctx, run_name=run_name)
 
         ####################
         # Optimize Policy

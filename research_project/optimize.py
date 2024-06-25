@@ -4,24 +4,28 @@ import torch.nn as nn
 from eztils.torch import zeros_like
 
 from research_project.buffer import AgentBuffer, BaseBuffer, BufferList, PrincipalBuffer
-from research_project.logger import Logger
-from research_project.utils import Config, Context
-from sen.neural.agent_architectures import (
+from research_project.neural.agent_architectures import (
     BaseAgent,
     FlattenedEpisodeInfo,
     PrincipalAgent,
     StepInfo,
 )
+from research_project.new_logger import MLLogger
+from research_project.utils import Config, Context
 
 
 def optimize_policy(
     args: Config,
     ctx: Context,
     base_agent: BaseAgent,
-    logger: Logger,
+    logger: MLLogger,
     buffer: BaseBuffer,
 ):
     principal = isinstance(base_agent, PrincipalAgent)
+    if principal:
+        prefix = "principal_"
+    else:
+        prefix = ""
     with torch.no_grad():
         # TODO: find out if value with final observation is boilerplate, if so put it in context or base_agent (instead of next_obs)
         # get value of next state - after the episode, next_obs for both principal and agent will be the last obs
@@ -47,73 +51,88 @@ def optimize_policy(
                 delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             )  # update advantage for current time step
 
-        # flatten the batch
-        agent_info: FlattenedEpisodeInfo = buffer.reshape_for_opt(ctx.num_agents)
-        advantages = advantages.reshape(-1)
-        # sets returns equal to Q(s,a) -- values gives average expected return, which we adjust with the advantage to be more accurate
-        returns = (advantages + buffer.tensordict["values"]).reshape(-1)
+    # flatten the batch
+    returns = advantages + buffer.tensordict["values"]
+    returns = returns.reshape(-1)
+    agent_info: FlattenedEpisodeInfo = buffer.reshape_for_opt()
+    advantages = advantages.reshape(-1)
+    # sets returns equal to Q(s,a) -- values gives average expected return, which we adjust with the advantage to be more accurate
 
-        inds = np.arange(len(agent_info.obs))  # array of indices for the batch
-        logger.clipfracs = []  # list to store clipping fractions
-        # pass these in as args
-        if (
-            principal
-        ):  # this deals with the few discrepancies between optimizing principal vs agent
-            mb_size = args.minibatch_size // ctx.num_agents
-            optimizer = ctx.principal_optimizer
-        else:
-            mb_size = args.minibatch_size
-            optimizer = ctx.optimizer
+    inds = np.arange(len(agent_info.obs))  # array of indices for the batch
+    logger.clipfracs = []  # list to store clipping fractions
+    # pass these in as args
+    if (
+        principal
+    ):  # this deals with the few discrepancies between optimizing principal vs agent
+        mb_size = args.minibatch_size // ctx.num_agents
+        optimizer = ctx.principal_optimizer
+    else:
+        mb_size = args.minibatch_size
+        optimizer = ctx.optimizer
 
-        for epoch in range(args.update_epochs):
-            np.random.shuffle(inds)  # shuffle indices for mini-batching
-            for start in range(0, len(agent_info.obs), mb_size):
-                end = start + mb_size
-                mb_inds = inds[start:end]  # indices for minibatch
-                if principal:
-                    new_agent_info = base_agent.get_action_and_value(
-                        agent_info.obs[mb_inds],
-                        agent_info.cumulative_rewards[mb_inds],
-                        agent_info.actions.long()[mb_inds],
-                    )
-                else:
-                    new_agent_info = base_agent.get_action_and_value(
-                        agent_info.obs[mb_inds], agent_info.actions.long()[mb_inds]
-                    )
-                get_policy_gradient(
-                    new_agent_info,
-                    agent_info,
-                    logger,
-                    args.norm_adv,
-                    advantages,
-                    args.clip_coef,
-                    mb_inds,
+    for epoch in range(args.update_epochs):
+        np.random.shuffle(inds)  # shuffle indices for mini-batching
+        for start in range(0, len(agent_info.obs), mb_size):
+            end = start + mb_size
+            mb_inds = inds[start:end]  # indices for minibatch
+            if principal:
+                new_agent_info = base_agent.get_action_and_value(
+                    agent_info.obs[mb_inds],
+                    agent_info.cumulative_rewards[mb_inds],
+                    agent_info.actions.long()[mb_inds],
                 )
-                # Value loss
-                get_loss_fn_gradient(
-                    new_agent_info,
-                    args.clip_vloss,
-                    args.clip_coef,
-                    returns,
-                    mb_inds,
-                    agent_info,
-                    logger,
+            else:
+                new_agent_info = base_agent.get_action_and_value(
+                    agent_info.obs[mb_inds], agent_info.actions.long()[mb_inds]
                 )
-                logger.entropy_loss = agent_info.entropy.mean()
-                loss = (
-                    logger.pg_loss
-                    - args.ent_coef * logger.entropy_loss
-                    + logger.v_loss * args.vf_coef
-                )
+            get_policy_gradient(
+                new_agent_info,
+                agent_info,
+                logger,
+                args.norm_adv,
+                advantages,
+                args.clip_coef,
+                mb_inds,
+            )
+            # Value loss
+            get_loss_fn_gradient(
+                new_agent_info,
+                args.clip_vloss,
+                args.clip_coef,
+                returns,
+                mb_inds,
+                agent_info,
+                logger,
+            )
+            logger.entropy_loss = new_agent_info.entropy.mean()
+            loss = (
+                logger.pg_loss
+                - args.ent_coef * logger.entropy_loss
+                + logger.v_loss * args.vf_coef
+            )
 
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(base_agent.parameters(), args.max_grad_norm)
-                optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(base_agent.parameters(), args.max_grad_norm)
+            optimizer.step()
 
-            if args.target_kl is not None:
-                if logger.approx_kl > args.target_kl:
-                    break
+        if args.target_kl is not None:
+            if logger.approx_kl > args.target_kl:
+                break
+        logger.log(
+            f"Epoch {epoch}: {prefix}PG Loss: {logger.pg_loss / (len(inds) // mb_size)}, "
+            f"{prefix}V Loss: {logger.v_loss / (len(inds) // mb_size)}, "
+            f"{prefix}Entropy Loss: {logger.entropy_loss / (len(inds) // mb_size)}",
+            wandb_data={
+                f"{prefix}epoch": epoch,
+                f"{prefix}pg_loss": logger.pg_loss / (len(inds) // mb_size),
+                f"{prefix}v_loss": logger.v_loss / (len(inds) // mb_size),
+                f"{prefix}entropy_loss": logger.entropy_loss / (len(inds) // mb_size),
+                f"{prefix}approx_kl": logger.approx_kl,
+                f"{prefix}clipfrac": np.mean(logger.clipfracs),
+            },
+            flush=True,
+        )
 
         save_explained_var(logger, agent_info, returns, principal)
 
@@ -125,7 +144,7 @@ def get_loss_fn_gradient(
     returns,
     inds,
     agent_info: FlattenedEpisodeInfo,
-    logger: Logger,
+    logger: MLLogger,
 ):
     new_agent_info.value = new_agent_info.value.view(-1)
     if clip_vloss:  # check if clipped
@@ -145,14 +164,15 @@ def get_loss_fn_gradient(
 def get_policy_gradient(
     new_agent_info: StepInfo,
     agent_info: FlattenedEpisodeInfo,
-    logger: Logger,
+    logger: MLLogger,
     norm_adv: bool,
     advantages,
     clip_coef,
     inds,
 ):
+
     logratio = (
-        new_agent_info.log_prob - agent_info.actions[inds]
+        new_agent_info.log_prob - agent_info.log_probs[inds]
     )  # ratio betwen new and old policy
     ratio = logratio.exp()
 
@@ -177,7 +197,7 @@ def get_policy_gradient(
 
 
 def save_explained_var(
-    logger: Logger, agent_info: FlattenedEpisodeInfo, returns, principal
+    logger: MLLogger, agent_info: FlattenedEpisodeInfo, returns, principal
 ):
     y_pred, y_true = agent_info.values.cpu().numpy(), returns.cpu().numpy()
     var_y = np.var(y_true)

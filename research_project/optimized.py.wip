@@ -3,9 +3,8 @@
 
 # import typer
 # from rich import print
-# from typer_config.decorators import dump_json_config, use_json_config
-
 # from sen import setup_experiment
+# from typer_config.decorators import dump_json_config, use_json_config
 
 # setup_experiment()
 # import argparse
@@ -29,15 +28,15 @@
 # from eztils import datestr
 # from eztils.torch import seed_everything
 # from eztils.typer import dataclass_option
-# from meltingpot import substrate
-# from torch.utils.tensorboard import SummaryWriter
-# from typer_config.decorators import dump_json_config, use_json_config
-
 # from sen import LOG_DIR, huggingface_upload, utils, version
 # from sen.neural.agent_architectures import Agent, PrincipalAgent
 # from sen.principal import Principal
 # from sen.principal.utils import vote
 # from sen.vector_constructors import pettingzoo_env_to_vec_env_v1, sb3_concat_vec_envs_v1
+# from torch.utils.tensorboard import SummaryWriter
+# from typer_config.decorators import dump_json_config, use_json_config
+
+# from meltingpot import substrate
 
 # app = typer.Typer(
 #     name="sen",

@@ -7,8 +7,8 @@ import torchvision
 import wandb
 from torch.utils.tensorboard import SummaryWriter
 
+from research_project import huggingface_upload
 from research_project.utils import Config, Context
-from sen import huggingface_upload
 
 
 class Logger:

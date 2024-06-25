@@ -6,17 +6,14 @@ import torch
 from eztils.torch import zeros, zeros_like
 
 from research_project.buffer import *
-from research_project.utils import Config, Context
-from sen.neural.agent_architectures import Agent, PrincipalAgent
+from research_project.new_logger import MLLogger
+from research_project.utils import Config, Context, get_flush
 
 
-def collect_data_for_policy_update(
-    args: Config,
-    ctx: Context,
-    envs,
-):
+def collect_data_for_policy_update(args: Config, ctx: Context, envs, logger: MLLogger):
     start_step = ctx.episode_step
     for step in range(0, args.sampling_horizon):
+        flush = get_flush(step, args.flush_interval)
         if ctx.agent.next_obs.shape[3] != 19:
             warnings.warn(
                 "hardcoded value of 12 RGB channels - check RBG/indicator channel division here"
@@ -88,12 +85,12 @@ def collect_data_for_policy_update(
         # update principal observation and total_agent_reward
 
         principal_reward = (
-            ctx.principal.objective(extrinsic_reward) - prev_objective_val
+            ctx.principal.objective(extrinsic_reward) - ctx.prev_objective_val
         )
         prev_cumulative_reward = (
             zeros(args.num_parallel_games, ctx.num_agents)
             if (ctx.episode_step % args.tax_period) == 0
-            else ctx.principal_buffer["cumulative_rewards"][step - 1]
+            else ctx.principal_buffer.tensordict["cumulative_rewards"][step - 1]
         ).to(ctx.device)
         ctx.principal_agent.next_cumulative_reward = (
             prev_cumulative_reward
@@ -111,8 +108,21 @@ def collect_data_for_policy_update(
             principal_reward=torch.tensor(principal_reward).to(ctx.device).view(-1),
             step=step,
         )
+        logger.log(
+            f"Step {step}: "
+            f"Extrinsic reward: {extrinsic_reward.mean()}, Socially influenced reward: {socially_influenced_reward.mean()}, "
+            f"Principal Reward: {principal_reward}, Principal Cumulative Reward: {ctx.principal_agent.next_cumulative_reward}",
+            wandb_data={
+                "step": step,
+                "extrinsic_reward": extrinsic_reward.mean(),
+                "socially_influenced_reward": socially_influenced_reward.mean(),
+                "principal_reward": principal_reward,
+                "principal_cumulative_reward": ctx.principal_agent.next_cumulative_reward,
+            },
+            flush=flush,
+        )
 
-        prev_objective_val = ctx.principal.objective(extrinsic_reward)
+        ctx.prev_objective_val = ctx.principal.objective(extrinsic_reward)
 
         # Update observations and done flags
         ctx.principal_agent.next_done = zeros(
@@ -127,9 +137,19 @@ def collect_data_for_policy_update(
         # step episode
         ctx.episode_step += 1
     # These are only used for logging
-    ctx.principal_episode_rewards += torch.sum(ctx.principal_buffer["rewards"], 0)
-    ctx.episode_rewards += torch.sum(ctx.agent_buffer["rewards"], 0)
-    ctx.episode_world_obs[ctx.num_updates_for_this_ep - 1] = ctx.principal_buffer[
-        "obs"
-    ][:, 0, :, :, :].clone()
+    ctx.principal_episode_rewards += torch.sum(
+        ctx.principal_buffer.tensordict["rewards"], 0
+    )
+    ctx.episode_rewards += torch.sum(ctx.agent_buffer.tensordict["rewards"], 0)
+    ctx.episode_world_obs[ctx.num_updates_for_this_ep - 1] = (
+        ctx.principal_buffer.tensordict["obs"][:, 0, :, :, :].clone()
+    )
+    logger.log(
+        f"Episode summary - Principal rewards: {ctx.principal_episode_rewards.mean()}, Agent rewards: {ctx.episode_rewards.mean()}",
+        wandb_data={
+            "principal_episode_rewards": ctx.principal_episode_rewards.mean().item(),
+            "agent_episode_rewards": ctx.episode_rewards.mean().item(),
+        },
+        flush=True,
+    )
     return start_step, ctx.episode_step

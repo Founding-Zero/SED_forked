@@ -1,0 +1,12 @@
+{
+    "exp_name": "testing", 
+    "seed": 42,
+    "cuda": false,
+    "track": true,
+    "wandb_project_name": "refactor_testing",
+    "wandb_entity": "lad",
+    "num_episodes": 100,
+    "episode_length": 10,
+    "tax_period": 5,
+    "sampling_horizon": 10
+}

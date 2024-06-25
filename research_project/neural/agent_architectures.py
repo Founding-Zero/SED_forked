@@ -22,16 +22,15 @@ class StepInfo:
 class FlattenedEpisodeInfo:
     actions: torch.Tensor
     log_probs: torch.Tensor
-    entropy: torch.Tensor
     values: torch.Tensor
     obs: torch.Tensor
-    done: torch.Tensor
+    done: torch.Tensor = None
     cumulative_rewards: torch.Tensor = None
 
 
 class BaseAgent(ABC, nn.Module):
     def __init__(self):
-        super().__init()
+        super().__init__()
         self.next_obs = None
         self.next_done = None
 
