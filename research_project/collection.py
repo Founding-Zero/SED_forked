@@ -3,15 +3,18 @@ import warnings
 
 import numpy as np
 import torch
-from eztils.torch import zeros, zeros_like
+from eztils.torch import zeros
 
 from research_project.buffer import *
-from research_project.new_logger import MLLogger
+from research_project.logger import MLLogger
 from research_project.utils import Config, Context, get_flush
 
 
-def collect_data_for_policy_update(args: Config, ctx: Context, envs, logger: MLLogger):
+def collect_data_for_policy_update(
+    args: Config, ctx: Context, envs, logger: MLLogger, update
+):
     start_step = ctx.episode_step
+
     for step in range(0, args.sampling_horizon):
         flush = get_flush(step, args.flush_interval)
         if ctx.agent.next_obs.shape[3] != 19:
@@ -109,15 +112,15 @@ def collect_data_for_policy_update(args: Config, ctx: Context, envs, logger: MLL
             step=step,
         )
         logger.log(
-            f"Step {step}: "
+            f"Step {step + ((update-1)*args.sampling_horizon)}: "
             f"Extrinsic reward: {extrinsic_reward.mean()}, Socially influenced reward: {socially_influenced_reward.mean()}, "
             f"Principal Reward: {principal_reward}, Principal Cumulative Reward: {ctx.principal_agent.next_cumulative_reward}",
             wandb_data={
-                "step": step,
+                "step": ctx.episode_step + ((update - 1) * args.sampling_horizon),
                 "extrinsic_reward": extrinsic_reward.mean(),
                 "socially_influenced_reward": socially_influenced_reward.mean(),
                 "principal_reward": principal_reward,
-                "principal_cumulative_reward": ctx.principal_agent.next_cumulative_reward,
+                "principal_cumulative_reward": ctx.principal_agent.next_cumulative_reward.mean().item(),
             },
             flush=flush,
         )
@@ -141,14 +144,15 @@ def collect_data_for_policy_update(args: Config, ctx: Context, envs, logger: MLL
         ctx.principal_buffer.tensordict["rewards"], 0
     )
     ctx.episode_rewards += torch.sum(ctx.agent_buffer.tensordict["rewards"], 0)
-    ctx.episode_world_obs[ctx.num_updates_for_this_ep - 1] = (
-        ctx.principal_buffer.tensordict["obs"][:, 0, :, :, :].clone()
-    )
+    ctx.episode_world_obs[
+        ctx.num_updates_for_this_ep - 1
+    ] = ctx.principal_buffer.tensordict["obs"][:, 0, :, :, :].clone()
     logger.log(
         f"Episode summary - Principal rewards: {ctx.principal_episode_rewards.mean()}, Agent rewards: {ctx.episode_rewards.mean()}",
         wandb_data={
-            "principal_episode_rewards": ctx.principal_episode_rewards.mean().item(),
-            "agent_episode_rewards": ctx.episode_rewards.mean().item(),
+            "episode_eval/step": update,
+            "episode_eval/principal_episode_rewards": ctx.principal_episode_rewards.mean().item(),
+            "episode_eval/avg_agent_episode_rewards": ctx.episode_rewards.mean().item(),
         },
         flush=True,
     )

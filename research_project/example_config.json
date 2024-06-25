@@ -2,11 +2,13 @@
     "exp_name": "testing", 
     "seed": 42,
     "cuda": false,
-    "track": true,
+    "track": false,
     "wandb_project_name": "refactor_testing",
     "wandb_entity": "lad",
-    "num_episodes": 100,
-    "episode_length": 10,
-    "tax_period": 5,
-    "sampling_horizon": 10
+    "num_episodes": 20,
+    "episode_length": 100,
+    "tax_period": 20,
+    "sampling_horizon": 100,
+    "log_locally": true,
+    "log_file": "runs/training.log"
 }

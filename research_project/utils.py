@@ -12,32 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """PettingZoo interface to meltingpot environments."""
-import copy
 import dataclasses
 import functools
 import os
-import random
-import warnings
 
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 import supersuit as ss
 import torch
-import torch.nn as nn
 import torch.optim as optim
-from eztils.torch import set_gpu_mode, zeros, zeros_like
+from eztils.torch import zeros
 from gymnasium import utils as gym_utils
+from meltingpot import substrate
 
 # from meltingpot.examples.gym import utils
 from ml_collections import config_dict
 from pettingzoo import utils as pettingzoo_utils
 from pettingzoo.utils import wrappers
-from pettingzoo.utils.conversions import parallel_to_aec
-from tensordict import TensorDict
 
-from meltingpot import substrate
-from meltingpot.examples.gym import utils
+from meltingpot1.examples.gym import utils
 from research_project.buffer import AgentBuffer, BufferList, PrincipalBuffer
 from research_project.neural.agent_architectures import Agent, PrincipalAgent
 from research_project.principal import Principal
@@ -207,9 +201,7 @@ class Config:
     sampling_horizon: int = (
         200  # the number of timesteps between policy update iterations
     )
-    tax_period: int = (
-        50  # the number of timesteps tax periods last (at end of period tax vals updated and taxes applied)
-    )
+    tax_period: int = 50  # the number of timesteps tax periods last (at end of period tax vals updated and taxes applied)
     anneal_tax: bool = (
         True  # Toggle tax cap annealing over an initial proportion of episodes
     )
@@ -222,9 +214,7 @@ class Config:
     update_epochs: int = 4  # the K epochs to update the policy
     norm_adv: bool = True  # Toggles advantages normalization
     clip_coef: float = 0.2  # the surrogate clipping coefficient
-    clip_vloss: bool = (
-        True  # Toggles whether or not to use a clipped loss for the value function, as per the paper.
-    )
+    clip_vloss: bool = True  # Toggles whether or not to use a clipped loss for the value function, as per the paper.
     ent_coef: float = 0.01  # coefficient of the entropy
     vf_coef: float = 0.5  # coefficient of the value function
     max_grad_norm: float = 0.5  # the maximum norm for the gradient clipping
@@ -352,7 +342,6 @@ def get_flush(step, flush_interval):
 
 
 def create_envs(args: Config, env_config, principal):
-
     env = parallel_env(
         max_cycles=args.sampling_horizon, env_config=env_config, principal=principal
     )

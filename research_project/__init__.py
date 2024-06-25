@@ -3,7 +3,7 @@
 """ 
 Other global variables
 """
-from typing import List, Optional
+
 
 import dataclasses
 import os
@@ -21,7 +21,7 @@ from rich import print
 from torch.utils.tensorboard import SummaryWriter
 
 from research_project.collection import collect_data_for_policy_update
-from research_project.new_logger import MLLogger
+from research_project.logger import MLLogger
 from research_project.optimize import optimize_policy
 from research_project.principal.utils import vote
 from research_project.utils import *
@@ -150,7 +150,7 @@ def main():
         ################################
 
         start_step, end_step = collect_data_for_policy_update(
-            args=args, ctx=ctx, envs=envs, logger=logger
+            args=args, ctx=ctx, envs=envs, logger=logger, update=update
         )
 
         ####################
@@ -164,12 +164,11 @@ def main():
         # Optimize Policy
         ####################
 
-        optimize_policy(args, ctx, ctx.agent, logger, ctx.agent_buffer)
+        optimize_policy(args, ctx, ctx.agent, logger, ctx.agent_buffer, update)
         if not args.LLM:
             optimize_policy(
-                args, ctx, ctx.principal_agent, logger, ctx.principal_buffer
+                args, ctx, ctx.principal_agent, logger, ctx.principal_buffer, update
             )
-
         if ctx.num_updates_for_this_ep == ctx.num_policy_updates_per_ep:
             # episode finished
 

@@ -3,14 +3,14 @@ import torch
 import torch.nn as nn
 from eztils.torch import zeros_like
 
-from research_project.buffer import AgentBuffer, BaseBuffer, BufferList, PrincipalBuffer
+from research_project.buffer import BaseBuffer
+from research_project.logger import MLLogger
 from research_project.neural.agent_architectures import (
     BaseAgent,
     FlattenedEpisodeInfo,
     PrincipalAgent,
     StepInfo,
 )
-from research_project.new_logger import MLLogger
 from research_project.utils import Config, Context
 
 
@@ -20,6 +20,7 @@ def optimize_policy(
     base_agent: BaseAgent,
     logger: MLLogger,
     buffer: BaseBuffer,
+    update,
 ):
     principal = isinstance(base_agent, PrincipalAgent)
     if principal:
@@ -85,7 +86,7 @@ def optimize_policy(
                 new_agent_info = base_agent.get_action_and_value(
                     agent_info.obs[mb_inds], agent_info.actions.long()[mb_inds]
                 )
-            get_policy_gradient(
+            logger = get_policy_gradient(
                 new_agent_info,
                 agent_info,
                 logger,
@@ -95,7 +96,7 @@ def optimize_policy(
                 mb_inds,
             )
             # Value loss
-            get_loss_fn_gradient(
+            logger = get_loss_fn_gradient(
                 new_agent_info,
                 args.clip_vloss,
                 args.clip_coef,
@@ -104,6 +105,7 @@ def optimize_policy(
                 agent_info,
                 logger,
             )
+
             logger.entropy_loss = new_agent_info.entropy.mean()
             loss = (
                 logger.pg_loss
@@ -119,22 +121,21 @@ def optimize_policy(
         if args.target_kl is not None:
             if logger.approx_kl > args.target_kl:
                 break
+
         logger.log(
-            f"Epoch {epoch}: {prefix}PG Loss: {logger.pg_loss / (len(inds) // mb_size)}, "
+            f"Epoch {epoch + args.update_epochs*(update-1)}: {prefix}PG Loss: {logger.pg_loss / (len(inds) // mb_size)}, "
             f"{prefix}V Loss: {logger.v_loss / (len(inds) // mb_size)}, "
             f"{prefix}Entropy Loss: {logger.entropy_loss / (len(inds) // mb_size)}",
             wandb_data={
-                f"{prefix}epoch": epoch,
-                f"{prefix}pg_loss": logger.pg_loss / (len(inds) // mb_size),
-                f"{prefix}v_loss": logger.v_loss / (len(inds) // mb_size),
-                f"{prefix}entropy_loss": logger.entropy_loss / (len(inds) // mb_size),
-                f"{prefix}approx_kl": logger.approx_kl,
-                f"{prefix}clipfrac": np.mean(logger.clipfracs),
+                f"opt/epoch": epoch + args.update_epochs * (update - 1),
+                f"opt/{prefix}pg_loss": logger.pg_loss.item(),
+                f"opt/{prefix}v_loss": logger.v_loss.item(),
+                f"opt/{prefix}entropy_loss": logger.entropy_loss.item(),
+                f"opt/{prefix}approx_kl": logger.approx_kl,
+                f"opt/{prefix}clipfrac": np.mean(logger.clipfracs),
             },
             flush=True,
         )
-
-        save_explained_var(logger, agent_info, returns, principal)
 
 
 def get_loss_fn_gradient(
@@ -159,6 +160,7 @@ def get_loss_fn_gradient(
         logger.v_loss = 0.5 * v_loss_max.mean()
     else:
         logger.v_loss = 0.5 * ((new_agent_info.value - returns[inds]) ** 2).mean()
+    return logger
 
 
 def get_policy_gradient(
@@ -170,7 +172,6 @@ def get_policy_gradient(
     clip_coef,
     inds,
 ):
-
     logratio = (
         new_agent_info.log_prob - agent_info.log_probs[inds]
     )  # ratio betwen new and old policy
@@ -194,9 +195,10 @@ def get_policy_gradient(
         ratio, 1 - clip_coef, 1 + clip_coef
     )  # compute
     logger.pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+    return logger
 
 
-def save_explained_var(
+def get_explained_var(
     logger: MLLogger, agent_info: FlattenedEpisodeInfo, returns, principal
 ):
     y_pred, y_true = agent_info.values.cpu().numpy(), returns.cpu().numpy()
@@ -207,3 +209,5 @@ def save_explained_var(
         logger.principal_explained_var = explained_var
     else:
         logger.explained_var = explained_var
+
+    return logger
