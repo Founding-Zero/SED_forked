@@ -3,7 +3,7 @@ from abc import abstractmethod
 import numpy as np
 import torch
 
-from research_project.neural.agent_architectures import FlattenedEpisodeInfo, StepInfo
+from harvest_sed.neural.agent_architectures import FlattenedEpisodeInfo, StepInfo
 
 
 class BaseAlgorithm:

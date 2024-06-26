@@ -25,19 +25,19 @@ import torch.optim as optim
 from eztils.torch import zeros
 from gymnasium import utils as gym_utils
 from meltingpot import substrate
+from meltingpot1.examples.gym import utils
 
 # from meltingpot.examples.gym import utils
 from ml_collections import config_dict
 from pettingzoo import utils as pettingzoo_utils
 from pettingzoo.utils import wrappers
 
-from meltingpot1.examples.gym import utils
-from research_project.algorithms import AlgorithmFactory, BaseAlgorithm
-from research_project.buffer import AgentBuffer, BufferList, PrincipalBuffer
-from research_project.neural.agent_architectures import Agent, PrincipalAgent
-from research_project.principal import Principal
-from research_project.principal.vote import VotingFactory, VotingMechanism
-from research_project.vector_constructors import (
+from harvest_sed.algorithms import AlgorithmFactory, BaseAlgorithm
+from harvest_sed.buffer import AgentBuffer, BufferList, PrincipalBuffer
+from harvest_sed.neural.agent_architectures import Agent, PrincipalAgent
+from harvest_sed.principal import Principal
+from harvest_sed.principal.vote import VotingFactory, VotingMechanism
+from harvest_sed.vector_constructors import (
     pettingzoo_env_to_vec_env_v1,
     sb3_concat_vec_envs_v1,
 )
@@ -91,7 +91,7 @@ class _MeltingPotPettingZooEnv(pettingzoo_utils.ParallelEnv):
                 self.env_config, roles=self.env_config.default_player_roles
             )
         else:
-            from research_project.principal.substrate import build_principal_from_config
+            from harvest_sed.principal.substrate import build_principal_from_config
 
             self._env = build_principal_from_config(
                 self.env_config,

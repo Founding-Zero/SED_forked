@@ -5,7 +5,7 @@ import os
 import wandb
 from loguru import logger
 
-from research_project.utils import Config
+from harvest_sed.utils import Config
 
 
 class MLLogger:

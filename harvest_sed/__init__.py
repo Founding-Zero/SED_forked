@@ -20,19 +20,19 @@ from eztils.torch import seed_everything, set_gpu_mode
 from rich import print
 from torch.utils.tensorboard import SummaryWriter
 
-from research_project.collection import collect_data_for_policy_update
-from research_project.logger import MLLogger
-from research_project.optimize import optimize_policy
-from research_project.principal.utils import vote
-from research_project.principal.vote import VotingFactory, VotingMechanism
-from research_project.utils import *
+from harvest_sed.collection import collect_data_for_policy_update
+from harvest_sed.logger import MLLogger
+from harvest_sed.optimize import optimize_policy
+from harvest_sed.principal.utils import vote
+from harvest_sed.principal.vote import VotingFactory, VotingMechanism
+from harvest_sed.utils import *
 
 load_dotenv()
 
 
 def get_version() -> str:
     try:
-        return importlib_metadata.version("research_project")
+        return importlib_metadata.version("harvest_sed")
     except importlib_metadata.PackageNotFoundError:  # pragma: no cover
         return "unknown"
 
@@ -94,7 +94,7 @@ def main():
     logger = MLLogger(cfg=args)
     run_name = f"apple_picking__{args.exp_name}__{args.seed}__{int(time.time())}"
 
-    print(f"[bold green]Welcome to research_project v{version}[/]")
+    print(f"[bold green]Welcome to harvest_sed v{version}[/]")
 
     # from eztils.torch import seed_everything # install torch first to uncomment this line (by getting `poetry add eztils[torch]`` as a dependency)
     # seed_everything(conf.seed)

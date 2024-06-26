@@ -5,9 +5,9 @@ import numpy as np
 import torch
 from eztils.torch import zeros
 
-from research_project.buffer import *
-from research_project.logger import MLLogger
-from research_project.utils import Config, Context, get_flush
+from harvest_sed.buffer import *
+from harvest_sed.logger import MLLogger
+from harvest_sed.utils import Config, Context, get_flush
 
 
 def collect_data_for_policy_update(

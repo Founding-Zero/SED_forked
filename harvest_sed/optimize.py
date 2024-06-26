@@ -3,15 +3,15 @@ import torch
 import torch.nn as nn
 from eztils.torch import zeros_like
 
-from research_project.buffer import BaseBuffer
-from research_project.logger import MLLogger
-from research_project.neural.agent_architectures import (
+from harvest_sed.buffer import BaseBuffer
+from harvest_sed.logger import MLLogger
+from harvest_sed.neural.agent_architectures import (
     BaseAgent,
     FlattenedEpisodeInfo,
     PrincipalAgent,
     StepInfo,
 )
-from research_project.utils import Config, Context
+from harvest_sed.utils import Config, Context
 
 
 def optimize_policy(

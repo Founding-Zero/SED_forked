@@ -3,7 +3,7 @@ from abc import abstractmethod
 from eztils.torch import zeros
 from tensordict import TensorDict
 
-from research_project.neural.agent_architectures import FlattenedEpisodeInfo, StepInfo
+from harvest_sed.neural.agent_architectures import FlattenedEpisodeInfo, StepInfo
 
 
 # Base class for AgentBuffer and PrincipalBuffer so that we can toggle in optimize policy
