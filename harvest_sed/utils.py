@@ -25,13 +25,13 @@ import torch.optim as optim
 from eztils.torch import zeros
 from gymnasium import utils as gym_utils
 from meltingpot import substrate
-from meltingpot1.examples.gym import utils
 
 # from meltingpot.examples.gym import utils
 from ml_collections import config_dict
 from pettingzoo import utils as pettingzoo_utils
 from pettingzoo.utils import wrappers
 
+import harvest_sed.melting_pot as meltingpot_utils
 from harvest_sed.algorithms import AlgorithmFactory, BaseAlgorithm
 from harvest_sed.buffer import AgentBuffer, BufferList, PrincipalBuffer
 from harvest_sed.neural.agent_architectures import Agent, PrincipalAgent
@@ -102,17 +102,17 @@ class _MeltingPotPettingZooEnv(pettingzoo_utils.ParallelEnv):
         self.possible_agents = [
             PLAYER_STR_FORMAT.format(index=index) for index in range(self._num_players)
         ]
-        observation_space = utils.remove_world_observations_from_space(
-            utils.spec_to_space(self._env.observation_spec()[0])
+        observation_space = meltingpot_utils.remove_world_observations_from_space(
+            meltingpot_utils.spec_to_space(self._env.observation_spec()[0])
         )
         self.observation_space = functools.lru_cache(maxsize=None)(
             lambda agent_id: observation_space
         )
-        action_space = utils.spec_to_space(self._env.action_spec()[0])
+        action_space = meltingpot_utils.spec_to_space(self._env.action_spec()[0])
         self.action_space = functools.lru_cache(maxsize=None)(
             lambda agent_id: action_space
         )
-        self.state_space = utils.spec_to_space(
+        self.state_space = meltingpot_utils.spec_to_space(
             self._env.observation_spec()[0]["WORLD.RGB"]
         )
 
