@@ -52,7 +52,7 @@ class MLLogger:
                 raise ValueError(
                     "wandb_project must be provided when log_wandb is True"
                 )
-            wandb.init(project=self.wandb_project, config=cfg)
+            wandb.init(project=self.wandb_project, entity=self.wandb_entity, config=cfg)
             wandb.define_metric("opt/epoch")
             wandb.define_metric("principal_opt/epoch")
             wandb.define_metric("opt/*", step_metric="opt/epoch")
