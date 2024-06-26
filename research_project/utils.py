@@ -32,9 +32,11 @@ from pettingzoo import utils as pettingzoo_utils
 from pettingzoo.utils import wrappers
 
 from meltingpot1.examples.gym import utils
+from research_project.algorithms import AlgorithmFactory, BaseAlgorithm
 from research_project.buffer import AgentBuffer, BufferList, PrincipalBuffer
 from research_project.neural.agent_architectures import Agent, PrincipalAgent
 from research_project.principal import Principal
+from research_project.principal.vote import VotingFactory, VotingMechanism
 from research_project.vector_constructors import (
     pettingzoo_env_to_vec_env_v1,
     sb3_concat_vec_envs_v1,
@@ -221,6 +223,9 @@ class Config:
     target_kl: float = None  # the target KL divergence threshold
     LLM: bool = False
     flush_interval: int = 1
+    voting_type: str = "simple_mean"
+    selfishness_dist: str = "selfish"
+    algorithm: str = "ppo"
 
 
 class Context:
@@ -237,13 +242,12 @@ class Context:
         agent_buffer: AgentBuffer,
         principal_buffer: PrincipalBuffer,
         buffer_list: BufferList,
+        selfishness,
+        alg: BaseAlgorithm,
     ):
         self.num_agents = num_agents
         self.num_envs = num_envs
-        self.voting_values = np.random.uniform(size=[self.num_agents])
-        self.selfishness = np.random.uniform(size=[self.num_agents])
-        self.trust = np.random.uniform(size=[self.num_agents])
-
+        self.selfishness = selfishness
         self.device = device
         self.agent: Agent = agent
         self.principal_agent: PrincipalAgent = principal_agent
@@ -255,7 +259,7 @@ class Context:
             self.agent.parameters(), lr=args.learning_rate, eps=args.adam_eps
         )
         self.principal = principal
-
+        self.alg = alg
         # ALGO Logic: Storage setup
         self.agent_buffer = agent_buffer
         self.principal_buffer = principal_buffer
@@ -293,10 +297,17 @@ class Context:
         self.tax_values = []
 
 
-def set_agent_preferences(num_agents):
-    voting_values = np.random.uniform(size=[num_agents])
-    trust = np.random.uniform(size=[num_agents])
-    return voting_values, trust
+class SelfishnessFactory:
+    @staticmethod
+    def get_selfishness(selfishness_dist: str, num_agents):
+        if selfishness_dist == "selfish":
+            return np.ones(shape=[num_agents])
+        elif selfishness_dist == "generous":
+            return np.zeros(shape=[num_agents])
+
+
+def set_agent_selfishness(num_agents, selfishness_dist):
+    return SelfishnessFactory.get_selfishness(selfishness_dist, num_agents)
 
 
 def anneal_lr(update, total_updates, args: Config):
@@ -371,10 +382,16 @@ def set_context(args: Config, device):
     env_config = substrate.get_config(env_name)
 
     num_players = len(env_config.default_player_roles)
-    principal = Principal(num_players, args.num_parallel_games, "egalitarian")
+    principal = Principal(num_players, args.num_parallel_games)
 
     num_agents, num_envs, envs = create_envs(args, env_config, principal)
+    selfishness = set_agent_selfishness(num_agents, args.selfishness_dist)
+    voting_mechanism: VotingMechanism = VotingFactory.get_voting_mechanism(
+        args.voting_type
+    )
+    principal.set_objective(voting_mechanism.vote_on_p(selfishness))
 
+    alg: BaseAlgorithm = AlgorithmFactory.get_alg(args.algorithm)
     agent = Agent(envs, num_envs)
     principal_agent = PrincipalAgent(
         num_agents, envs, num_envs, args.num_parallel_games
@@ -407,5 +424,7 @@ def set_context(args: Config, device):
         agent_buffer=agent_buffer,
         principal_buffer=principal_buffer,
         buffer_list=buffer_list,
+        selfishness=selfishness,
+        alg=alg,
     )
     return ctx, envs

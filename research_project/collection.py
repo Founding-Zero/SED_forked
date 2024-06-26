@@ -112,17 +112,15 @@ def collect_data_for_policy_update(
             step=step,
         )
         logger.log(
-            f"Step {step + ((update-1)*args.sampling_horizon)}: "
-            f"Extrinsic reward: {extrinsic_reward.mean()}, Socially influenced reward: {socially_influenced_reward.mean()}, "
-            f"Principal Reward: {principal_reward}, Principal Cumulative Reward: {ctx.principal_agent.next_cumulative_reward}",
             wandb_data={
-                "step": ctx.episode_step + ((update - 1) * args.sampling_horizon),
-                "extrinsic_reward": extrinsic_reward.mean(),
-                "socially_influenced_reward": socially_influenced_reward.mean(),
-                "principal_reward": principal_reward,
-                "principal_cumulative_reward": ctx.principal_agent.next_cumulative_reward.mean().item(),
+                "collect/step": ctx.episode_step
+                + ((update - 1) * args.sampling_horizon),
+                "collect/extrinsic_reward": extrinsic_reward.mean(),
+                "collect/socially_influenced_reward": socially_influenced_reward.mean(),
+                "collect/principal_reward": principal_reward,
+                "collect/principal_cumulative_reward": ctx.principal_agent.next_cumulative_reward.mean().item(),
             },
-            flush=flush,
+            flush=False,
         )
 
         ctx.prev_objective_val = ctx.principal.objective(extrinsic_reward)
@@ -148,7 +146,6 @@ def collect_data_for_policy_update(
         ctx.num_updates_for_this_ep - 1
     ] = ctx.principal_buffer.tensordict["obs"][:, 0, :, :, :].clone()
     logger.log(
-        f"Episode summary - Principal rewards: {ctx.principal_episode_rewards.mean()}, Agent rewards: {ctx.episode_rewards.mean()}",
         wandb_data={
             "episode_eval/step": update,
             "episode_eval/principal_episode_rewards": ctx.principal_episode_rewards.mean().item(),

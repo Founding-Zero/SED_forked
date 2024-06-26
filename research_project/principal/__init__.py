@@ -5,8 +5,7 @@ from dm_env import TimeStep
 
 
 class Principal:
-    def __init__(self, num_players, num_games, starting_objective) -> None:
-        self.set_objective(starting_objective)
+    def __init__(self, num_players, num_games) -> None:
         self.num_players = num_players
         self.num_games = num_games
         self.player_wealths = {
@@ -24,12 +23,9 @@ class Principal:
                 if tax_val != 11:
                     self.tax_vals[f"game_{game_id}"][bracket_idx] = tax_val / 10
 
-    def set_objective(self, objective):
-        print("-----------Setting objective to", objective)
-        if objective == "egalitarian":
-            self.objective = self.egalitarian
-        elif objective == "utilitarian":
-            self.objective = self.utilitarian
+    def set_objective(self, p_val):
+        self.objective = self.swf
+        self.p_val = p_val
 
     # tax calculated at each timestep
     def tax(self) -> float:
@@ -70,14 +66,10 @@ class Principal:
             player_id = i % self.num_players
             self.player_wealths[f"game_{game_id}"][player_id] += reward[i]
 
-    def utilitarian(self, reward):
-        """Utilitarian objective"""
+    def swf(self, reward):
         result = []
         for i in range(0, len(reward), self.num_players):
-            result.append(np.mean(reward[i : i + self.num_players]))
-
+            value = reward[i : i + self.num_players]
+            welfare = (np.mean(value**self.p_val)) ** (1 / self.p_val)
+            result.append(welfare)
         return np.array(result).flatten()
-
-    def egalitarian(self, reward):
-        """Egalitarian objective"""
-        return min(reward)

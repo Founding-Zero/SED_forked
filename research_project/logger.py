@@ -19,6 +19,7 @@ class MLLogger:
         self.wandb_project = cfg.wandb_project_name
         self.wandb_entity = cfg.wandb_entity
         self.buffer = []
+        self.return_buffer = []
         self.learning_rate = None
         self.v_loss = None
         self.pg_loss = None
@@ -53,33 +54,57 @@ class MLLogger:
                 )
             wandb.init(project=self.wandb_project, config=cfg)
             wandb.define_metric("opt/epoch")
-            wandb.define_metric("train_avg/step")
+            wandb.define_metric("principal_opt/epoch")
             wandb.define_metric("opt/*", step_metric="opt/epoch")
+            wandb.define_metric("principal_opt/*", step_metric="prinicpal_opt/epoch")
+
+            wandb.define_metric("principal_train_avg/step")
+            wandb.define_metric("train_avg/step")
+            wandb.define_metric(
+                "principal_train_avg/*", step_metric="principal_train_avg/step"
+            )
             wandb.define_metric("train_avg/*", step_metric="train_avg/step")
+
+            wandb.define_metric("principal_episode_eval/step")
             wandb.define_metric("episode_eval/step")
+            wandb.define_metric(
+                "principal_episode_eval/*", step_metric="principal_episode_eval/step"
+            )
             wandb.define_metric("episode_eval/*", step_metric="episode_eval/step")
+
+            wandb.define_metric("collect/step")
+            wandb.define_metric("/*", step_metric="collect/step")
 
     def log(
         self,
-        message: str,
-        level: str = "INFO",
         wandb_data: Optional[Dict[str, Any]] = None,
         flush: bool = False,
     ):
         # Add to buffer
-        self.buffer.append((message, level, wandb_data))
+        self.buffer.append(wandb_data)
         if flush:
             self.flush()
 
+    def log_return(
+        self,
+        wandb_data: Optional[Dict[str, Any]] = None,
+    ):
+        self.return_buffer.append(wandb_data)
+
+    def flush_return(self):
+        for idx in range(len(self.buffer)):
+            self.buffer[idx].update(self.return_buffer[idx])
+            wandb.log(self.buffer[idx])
+        self.return_buffer.clear()
+
     def flush(self):
-        for message, level, wandb_data in self.buffer:
+        for wandb_data in self.buffer:
             # Log locally and/or to file
-            if self.log_locally or self.log_file:
-                getattr(logger, level.lower())(message)
+            # if self.log_locally or self.log_file:
+            #     getattr(logger, level.lower())(message)
             # Log to wandb
-            if self.log_wandb and wandb_data:
-                step = wandb_data.pop("global_step", None)
-                wandb.log(wandb_data, step=step)
+            wandb.log(wandb_data)
+        self.buffer.clear()
 
         # Clear the buffer
         self.buffer.clear()

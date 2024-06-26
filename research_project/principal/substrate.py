@@ -20,9 +20,6 @@ from collections.abc import Collection, Mapping, Sequence
 import chex
 import dm_env
 import reactivex
-from ml_collections import config_dict
-from reactivex import subject
-
 from meltingpot.configs import substrates as substrate_configs
 from meltingpot.substrate import get_factory_from_config
 from meltingpot.utils.substrates import builder
@@ -34,6 +31,8 @@ from meltingpot.utils.substrates.wrappers import (
     observables,
     observables_wrapper,
 )
+from ml_collections import config_dict
+from reactivex import subject
 
 from . import Principal
 

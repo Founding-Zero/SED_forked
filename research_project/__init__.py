@@ -24,6 +24,7 @@ from research_project.collection import collect_data_for_policy_update
 from research_project.logger import MLLogger
 from research_project.optimize import optimize_policy
 from research_project.principal.utils import vote
+from research_project.principal.vote import VotingFactory, VotingMechanism
 from research_project.utils import *
 
 load_dotenv()
@@ -124,7 +125,6 @@ def main():
     print("device:", device)
 
     ctx, envs = set_context(args, device)
-    voting_values, trust = set_agent_preferences(ctx.num_agents)
 
     ### TODO: Ask Eddie about this (found in optimized.py)
     # if args.load_pretrained:
@@ -169,22 +169,22 @@ def main():
             optimize_policy(
                 args, ctx, ctx.principal_agent, logger, ctx.principal_buffer, update
             )
+        logger.flush()
         if ctx.num_updates_for_this_ep == ctx.num_policy_updates_per_ep:
             # episode finished
 
             #######
             # Log
             #######
-            logger.log(run_name, args, ctx, writer, ctx.tax_frac)
+            # logger.log(run_name, args, ctx, writer, ctx.tax_frac)
             ########################
             # Vote On New Objective
             ########################
-            principal_objective = vote(voting_values)
 
             ################
             # Update Context
             ################
-            ctx.new_episode(envs, principal_objective, args.num_parallel_games)
+            ctx.new_episode(envs, args.num_parallel_games)
 
     envs.close()
     writer.close()

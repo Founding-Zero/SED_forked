@@ -58,7 +58,9 @@ def optimize_policy(
     agent_info: FlattenedEpisodeInfo = buffer.reshape_for_opt()
     advantages = advantages.reshape(-1)
     # sets returns equal to Q(s,a) -- values gives average expected return, which we adjust with the advantage to be more accurate
-
+    for r in range(len(returns)):
+        logger.log_return(wandb_data={f"collect/{prefix}returns": returns[r].mean()})
+    logger.flush_return()
     inds = np.arange(len(agent_info.obs))  # array of indices for the batch
     logger.clipfracs = []  # list to store clipping fractions
     # pass these in as args
@@ -86,7 +88,7 @@ def optimize_policy(
                 new_agent_info = base_agent.get_action_and_value(
                     agent_info.obs[mb_inds], agent_info.actions.long()[mb_inds]
                 )
-            logger = get_policy_gradient(
+            logger = ctx.alg.get_policy_gradient(
                 new_agent_info,
                 agent_info,
                 logger,
@@ -96,7 +98,7 @@ def optimize_policy(
                 mb_inds,
             )
             # Value loss
-            logger = get_loss_fn_gradient(
+            logger = ctx.alg.get_value_fn_gradient(
                 new_agent_info,
                 args.clip_vloss,
                 args.clip_coef,
@@ -123,9 +125,6 @@ def optimize_policy(
                 break
 
         logger.log(
-            f"Epoch {epoch + args.update_epochs*(update-1)}: {prefix}PG Loss: {logger.pg_loss / (len(inds) // mb_size)}, "
-            f"{prefix}V Loss: {logger.v_loss / (len(inds) // mb_size)}, "
-            f"{prefix}Entropy Loss: {logger.entropy_loss / (len(inds) // mb_size)}",
             wandb_data={
                 f"opt/epoch": epoch + args.update_epochs * (update - 1),
                 f"opt/{prefix}pg_loss": logger.pg_loss.item(),
@@ -134,80 +133,5 @@ def optimize_policy(
                 f"opt/{prefix}approx_kl": logger.approx_kl,
                 f"opt/{prefix}clipfrac": np.mean(logger.clipfracs),
             },
-            flush=True,
+            flush=False,
         )
-
-
-def get_loss_fn_gradient(
-    new_agent_info: StepInfo,
-    clip_vloss,
-    clip_coef,
-    returns,
-    inds,
-    agent_info: FlattenedEpisodeInfo,
-    logger: MLLogger,
-):
-    new_agent_info.value = new_agent_info.value.view(-1)
-    if clip_vloss:  # check if clipped
-        v_loss_unclipped = (new_agent_info.value - returns[inds]) ** 2
-        v_clipped = agent_info.values[inds] + torch.clamp(
-            new_agent_info.value - agent_info.values[inds],
-            -clip_coef,
-            clip_coef,
-        )
-        v_loss_clipped = (v_clipped - returns[inds]) ** 2
-        v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-        logger.v_loss = 0.5 * v_loss_max.mean()
-    else:
-        logger.v_loss = 0.5 * ((new_agent_info.value - returns[inds]) ** 2).mean()
-    return logger
-
-
-def get_policy_gradient(
-    new_agent_info: StepInfo,
-    agent_info: FlattenedEpisodeInfo,
-    logger: MLLogger,
-    norm_adv: bool,
-    advantages,
-    clip_coef,
-    inds,
-):
-    logratio = (
-        new_agent_info.log_prob - agent_info.log_probs[inds]
-    )  # ratio betwen new and old policy
-    ratio = logratio.exp()
-
-    with torch.no_grad():
-        # calculate approx_kl http://joschu.net/blog/kl-approx.html
-        logger.old_approx_kl = (-logratio).mean()
-        logger.approx_kl = ((ratio - 1) - logratio).mean()
-        logger.clipfracs += [((ratio - 1.0).abs() > clip_coef).float().mean().item()]
-
-    mb_advantages = advantages[inds]  # advantages for the minibatch
-    if norm_adv:  # normalize if specified
-        mb_advantages = (mb_advantages - mb_advantages.mean()) / (
-            mb_advantages.std() + 1e-8
-        )
-
-    # Policy loss (normal and clipped) Note these are negative, and that we use torch.max()
-    pg_loss1 = -mb_advantages * ratio
-    pg_loss2 = -mb_advantages * torch.clamp(
-        ratio, 1 - clip_coef, 1 + clip_coef
-    )  # compute
-    logger.pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-    return logger
-
-
-def get_explained_var(
-    logger: MLLogger, agent_info: FlattenedEpisodeInfo, returns, principal
-):
-    y_pred, y_true = agent_info.values.cpu().numpy(), returns.cpu().numpy()
-    var_y = np.var(y_true)
-    explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-    if principal:
-        logger.principal_explained_var = explained_var
-    else:
-        logger.explained_var = explained_var
-
-    return logger
